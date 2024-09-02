@@ -205,6 +205,8 @@ function subscribeToStockPrice(ticker: string): void {
 				stockInformation.price.current = content.price;
 				stockInformation.price.day_high = content.dayHigh || stockInformation.price.day_high;
 				stockInformation.price.day_low = content.dayLow || stockInformation.price.day_low;
+				stockInformation.price.day_volume = content.dayVolume || stockInformation.price.day_volume;
+				stockInformation.price.updated_at = new Date(parseInt(content.time));
 
 				stockStatusBar.setStockPrice(stockInformation);
 				stockStatusBar.blinkIndicator();

@@ -34,7 +34,7 @@ export class StockStatusBar {
      */
     public setStockSymbol(stockInformation: StockInformation): void {
         this.stockSymbolItem.text = `$(graph) ${stockInformation.symbol}`;
-        this.stockSymbolItem.tooltip = new vscode.MarkdownString(`### ${stockInformation.name}\n${stockInformation.exchange} / ${stockInformation.currency}\n\n * Sector: ${stockInformation.sector}\n * Timezone: ${stockInformation.timezone}\n * Day Range: ${stockInformation.price.day_low.toFixed(2)} - ${stockInformation.price.day_high.toFixed(2)}\n * Previous Close: ${stockInformation.price.previous_close.toFixed(2)}`);
+        this.stockSymbolItem.tooltip = new vscode.MarkdownString(`### ${stockInformation.name}\n${stockInformation.exchange} / ${stockInformation.currency}\n\n * Sector: ${stockInformation.sector}\n * Timezone: ${stockInformation.timezone}\n * Previous Close: ${stockInformation.price.previous_close.toFixed(2)}`);
         this.show(); // Ensure all items are visible when updated
     }
 
@@ -54,6 +54,7 @@ export class StockStatusBar {
         const currency = stockInformation.type === 'INDEX' ? '' : this.currencySymbolsMap[stockInformation.currency || ''] || stockInformation.currency;
 
         this.stockPriceItem.text = `${currency}${priceText} (${percentText}%) $(circle-outline)`;
+        this.stockPriceItem.tooltip = new vscode.MarkdownString(`* Day Range: ${stockInformation.price.day_low.toFixed(2)} - ${stockInformation.price.day_high.toFixed(2)}\n* Day Volume: ${stockInformation.price.day_volume || '-'}\n* Updated At: ${stockInformation.price.updated_at?.toLocaleTimeString()}`);
         this.show(); // Ensure all items are visible when updated
     }
 

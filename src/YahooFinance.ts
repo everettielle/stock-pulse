@@ -186,6 +186,8 @@ export class YahooFinance {
                     day_high: quoteResult.summaryDetail.dayHigh || 0,
                     day_low: quoteResult.summaryDetail.dayLow || 0,
                     previous_close: quoteResult.summaryDetail.regularMarketPreviousClose || 0,
+                    day_volume: priceResult.meta.regularMarketVolume || 0,
+                    updated_at: new Date(priceResult.meta.regularMarketTime * 1000),
                 },
             };
         }

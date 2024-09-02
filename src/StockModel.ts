@@ -14,6 +14,8 @@ export interface StockPriceData {
     day_high: number;
     day_low: number;
     previous_close: number;
+    day_volume: number | null;
+    updated_at: Date | null;
 }
 
 export default StockInformation;
