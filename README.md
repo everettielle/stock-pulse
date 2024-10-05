@@ -1,6 +1,6 @@
 # StockPulse
 
-Stock Pulse is a Visual Studio Code extension that allows users to track real-time stock price updates directly within the editor. It provides up-to-date stock information based on YahooFinance API, helping you stay informed on the latest market movements while programming in VS Code.
+StockPulse is a Visual Studio Code extension that allows users to track real-time stock price updates directly within the editor. It provides up-to-date stock information based on YahooFinance API, helping you stay informed on the latest market movements while programming in VS Code.
 
 ## Features
 
