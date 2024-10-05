@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import WebSocket from 'ws';
 import * as protobuf from 'protobufjs';
 import StockInformation from './StockModel';
 import StockStatusBar from './StockStatusBar';
@@ -7,7 +6,6 @@ import YahooFinance from './YahooFinance';
 
 let stockStatusBar: StockStatusBar | null = null;
 let stockInformation: StockInformation;
-let ws: WebSocket | null = null;
 let PricingData: protobuf.Type = protobuf.parse(`
 syntax = "proto3";
 
@@ -81,11 +79,15 @@ message PricingData {
 }
 	`).root.lookupType('PricingData');
 
+const yahooFinance: YahooFinance = new YahooFinance();
+
 /**
  * Activate the extension
  * @param context - VSCode extension context
  */
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
+	await yahooFinance.initialize();
+
 	// Load the Protobuf definitions on activation
 	const disposable = vscode.commands.registerCommand('stock-pulse.showStock', async () => {
 		const ticker = await promptForTicker();
@@ -96,7 +98,7 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 
 		const newStockInformation = await fetchStockInformation(ticker);
-		
+
 		if (!newStockInformation) {
 			vscode.window.showErrorMessage(`Failed to fetch stock information for ${ticker}`);
 			return;
@@ -105,9 +107,35 @@ export function activate(context: vscode.ExtensionContext) {
 		stockInformation = newStockInformation;
 
 		updateStockStatusBar(stockInformation);
+		yahooFinance.subscribeToStockPrice(ticker, function (data: any) {
+			try {
+				const binaryString = atob(data);
+				const bytes = new Uint8Array(binaryString.length);
+				for (let i = 0; i < binaryString.length; i++) {
+					bytes[i] = binaryString.charCodeAt(i);
+				}
+				let content = PricingData.decode(bytes).toJSON();
 
-		// Establish WebSocket connection and subscribe to live updates
-		subscribeToStockPrice(ticker);
+				if (!stockInformation) {
+					console.error('Stock information is not available');
+					return;
+				}
+
+				// Update the status bar with the new price
+				if (stockStatusBar && content.id === ticker) {
+					stockInformation.price.current = content.price;
+					stockInformation.price.day_high = content.dayHigh || stockInformation.price.day_high;
+					stockInformation.price.day_low = content.dayLow || stockInformation.price.day_low;
+					stockInformation.price.day_volume = content.dayVolume || stockInformation.price.day_volume;
+					stockInformation.price.updated_at = new Date(parseInt(content.time));
+
+					stockStatusBar.setStockPrice(stockInformation);
+					stockStatusBar.blinkIndicator();
+				}
+			} catch (error) {
+				console.error('Failed to process WebSocket message:', error);
+			}
+		});
 	});
 
 	context.subscriptions.push(disposable);
@@ -120,9 +148,8 @@ export function deactivate() {
 	if (stockStatusBar) {
 		stockStatusBar.dispose();
 	}
-	if (ws) {
-		ws.close();
-	}
+
+	yahooFinance.dispose();
 }
 
 /**
@@ -143,11 +170,7 @@ async function promptForTicker(): Promise<string | undefined> {
  */
 async function fetchStockInformation(ticker: string): Promise<StockInformation | null> {
 	try {
-		const yahooFinance = new YahooFinance();
-		await yahooFinance.initialize();
-
-		const stockInformation = await yahooFinance.getQuote(ticker.toUpperCase());
-		return stockInformation;
+		return await yahooFinance.getQuote(ticker.toUpperCase());
 	} catch (error) {
 		console.error(`Failed to fetch stock information: ${error}`);
 		return null;
@@ -166,57 +189,4 @@ function updateStockStatusBar(stockInformation: StockInformation): void {
 	stockStatusBar.setStockSymbol(stockInformation);
 	stockStatusBar.setStockPrice(stockInformation);
 	stockStatusBar.blinkIndicator();
-}
-
-/**
- * Establishes a WebSocket connection to subscribe to live stock price updates
- * @param ticker - The stock ticker to subscribe to
- */
-function subscribeToStockPrice(ticker: string): void {
-	// Close existing WebSocket connection if any
-	if (ws) {
-		ws.close();
-	}
-
-	// Create a new WebSocket connection
-	ws = new WebSocket('wss://streamer.finance.yahoo.com/');
-
-	ws.on('open', () => {
-		// Subscribe to the selected ticker
-		ws?.send(JSON.stringify({ subscribe: [ticker] }));
-	});
-
-	ws.on('message', (data: any) => {
-		try {
-			const binaryString = atob(data);
-			const bytes = new Uint8Array(binaryString.length);
-			for (let i = 0; i < binaryString.length; i++) {
-				bytes[i] = binaryString.charCodeAt(i);
-			}
-			let content = PricingData.decode(bytes).toJSON();
-
-			if (!stockInformation) {
-				console.error('Stock information is not available');
-				return;
-			}
-	
-			// Update the status bar with the new price
-			if (stockStatusBar && content.id === ticker) {
-				stockInformation.price.current = content.price;
-				stockInformation.price.day_high = content.dayHigh || stockInformation.price.day_high;
-				stockInformation.price.day_low = content.dayLow || stockInformation.price.day_low;
-				stockInformation.price.day_volume = content.dayVolume || stockInformation.price.day_volume;
-				stockInformation.price.updated_at = new Date(parseInt(content.time));
-
-				stockStatusBar.setStockPrice(stockInformation);
-				stockStatusBar.blinkIndicator();
-			}
-		} catch (error) {
-			console.error('Failed to process WebSocket message:', error);
-		}
-	});
-
-	ws.on('error', (error: any) => {
-		console.error('WebSocket error:', error);
-	});
 }

@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
+import WebSocket from 'ws';
 import StockInformation from './StockModel';
 
 const YAHOO_COOKIE_URL = 'https://fc.yahoo.com/';
@@ -11,6 +12,7 @@ export class YahooFinance {
     private cookie: string | null = null;
     private crumb: string | null = null;
     private axiosInstance: AxiosInstance;
+    private webSocket: WebSocket | null = null;
 
     constructor() {
         this.axiosInstance = axios.create();
@@ -23,9 +25,10 @@ export class YahooFinance {
         try {
             this.cookie = await this.fetchCookie();
             this.crumb = await this.fetchCrumb();
+            console.log('YahooFinance initialized');
         } catch (error) {
             console.error('Failed to initialize Yahoo Finance API:', error);
-            throw new Error('Initialization failed');
+            throw new Error('YahooFinance initialization failed');
         }
     }
 
@@ -34,26 +37,13 @@ export class YahooFinance {
      * @returns The cookie string.
      */
     private async fetchCookie(): Promise<string> {
-        try {
-            const response: AxiosResponse = await this.axiosInstance.get(YAHOO_COOKIE_URL, {
-                validateStatus: this.isValidResponse,
-                headers: {
-                    'User-Agent': USER_AGENT,
-                },
-            });
+        const response: AxiosResponse = await this.axiosInstance.get(YAHOO_COOKIE_URL, {
+            validateStatus: (status) => status === 404,
+            headers: {
+                'User-Agent': USER_AGENT,
+            },
+        });
 
-            return this.extractCookie(response);
-        } catch (error) {
-            this.handleError('Failed to fetch cookie', error);
-        }
-    }
-
-    /**
-     * Extracts the cookie from the response headers.
-     * @param response - The Axios response object.
-     * @returns The extracted cookie string.
-     */
-    private extractCookie(response: AxiosResponse): string {
         return response.headers['set-cookie']?.[0] || '';
     }
 
@@ -66,29 +56,13 @@ export class YahooFinance {
             throw new Error('Cookie not set');
         }
 
-        try {
-            const response: AxiosResponse = await this.axiosInstance.get(YAHOO_CRUMB_URL, {
-                headers: {
-                    Cookie: this.cookie,
-                    'User-Agent': USER_AGENT,
-                },
-            });
+        const response: AxiosResponse = await this.axiosInstance.get(YAHOO_CRUMB_URL, {
+            headers: {
+                Cookie: this.cookie,
+                'User-Agent': USER_AGENT,
+            },
+        });
 
-            return this.extractCrumb(response);
-        } catch (error) {
-            this.handleError('Failed to fetch crumb', error);
-        }
-    }
-
-    /**
-     * Extracts the crumb from the response.
-     * @param response - The Axios response object.
-     * @returns The extracted crumb string.
-     */
-    private extractCrumb(response: AxiosResponse): string {
-        if (response.status !== 200) {
-            throw new Error('Failed to get crumb');
-        }
         return response.data;
     }
 
@@ -102,20 +76,49 @@ export class YahooFinance {
             throw new Error('YahooFinance is not initialized. Call initialize() first.');
         }
 
-        try {
-            const quoteResponse: AxiosResponse = await this.fetchTickerQuote(symbol);
+        const quoteResponse: AxiosResponse = await this.fetchTickerQuote(symbol);
 
-            if (quoteResponse.status === 404) {
-                console.warn(`Quote not found for ticker symbol: ${symbol}`);
-                return null;
-            }
-
-            const priceResponse: AxiosResponse = await this.fetchTickerPrice(symbol);
-
-            return this.parseStockInformation(quoteResponse, priceResponse, symbol);
-        } catch (error) {
-            this.handleError('Failed to fetch quote', error);
+        if (quoteResponse.status === 404) {
+            console.warn(`Quote not found for ticker symbol: ${symbol}`);
+            return null;
         }
+
+        const priceResponse: AxiosResponse = await this.fetchTickerPrice(symbol);
+
+        return this.parseStockInformation(quoteResponse, priceResponse);
+    }
+
+    /**
+     * YahooFinance API request
+     * @param url - The URL to make the request to.
+     * @param params - The request parameters.
+     * @returns The Axios response object.
+     */
+    private async request(url: string, params: any): Promise<AxiosResponse> {
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        while (attempts < maxAttempts) {
+            try {
+                return await this.axiosInstance.get(url, {
+                    headers: {
+                        Cookie: this.cookie,
+                        'User-Agent': USER_AGENT,
+                    },
+                    params: {
+                        crumb: this.crumb,
+                        ...params,
+                    },
+                    validateStatus: (status) => status >= 200 && status < 300 || status === 404,
+                });
+            } catch (error) {
+                console.error(`Failed to fetch data. Retrying... (${attempts + 1}/${maxAttempts})`, error);
+                await this.initialize();
+                attempts++;
+            }
+        }
+
+        throw new Error('Failed to fetch data after multiple attempts');
     }
 
     /**
@@ -124,19 +127,11 @@ export class YahooFinance {
      * @returns The Axios response object.
      */
     private async fetchTickerQuote(symbol: string): Promise<AxiosResponse> {
-        const url = `${YAHOO_QUOTE_URL}${symbol}`;
-        return this.axiosInstance.get(url, {
-            headers: {
-                Cookie: this.cookie,
-            },
-            params: {
-                crumb: this.crumb,
-                modules: 'quoteType,summaryDetail,assetProfile',
-                corsDomain: 'finance.yahoo.com',
-                formatted: 'false',
-                symbol: symbol,
-            },
-            validateStatus: this.isValidResponse,
+        return await this.request(`${YAHOO_QUOTE_URL}${symbol}`, {
+            modules: 'quoteType,summaryDetail,assetProfile',
+            corsDomain: 'finance.yahoo.com',
+            formatted: 'false',
+            symbol: symbol,
         });
     }
 
@@ -146,14 +141,10 @@ export class YahooFinance {
      * @returns The Axios response object.
      */
     private async fetchTickerPrice(symbol: string): Promise<AxiosResponse> {
-        const url = `${YAHOO_PRICE_URL}${symbol}`;
-        return this.axiosInstance.get(url, {
-            params: {
-                range: '1d',
-                interval: '1d',
-                includePrePost: 'false',
-            },
-            validateStatus: this.isValidResponse,
+        return await this.request(`${YAHOO_PRICE_URL}${symbol}`, {
+            range: '1d',
+            interval: '1d',
+            includePrePost: 'false',
         });
     }
 
@@ -163,56 +154,65 @@ export class YahooFinance {
      * @param symbol - The stock ticker symbol.
      * @returns The parsed StockInformation object.
      */
-    private parseStockInformation(quoteResponse: AxiosResponse, priceResponse: AxiosResponse, symbol: string): StockInformation | null {
-        let stockInformation: StockInformation;
+    private parseStockInformation(quoteResponse: AxiosResponse, priceResponse: AxiosResponse): StockInformation {
+        const quoteResult = quoteResponse.data.quoteSummary.result[0];
+        const priceResult = priceResponse.data.chart.result[0];
 
-        if (
-            quoteResponse.status === 200 && quoteResponse.data?.quoteSummary?.result
-            && priceResponse.status === 200 && priceResponse.data?.chart?.result
-        ) {
-            const quoteResult = quoteResponse.data.quoteSummary.result[0];
-            const priceResult = priceResponse.data.chart.result[0];
+        return {
+            type: quoteResult.quoteType.quoteType,
+            symbol: quoteResult.quoteType.symbol,
+            name: quoteResult.quoteType.longName || quoteResult.quoteType.shortName || '',
+            timezone: quoteResult.quoteType.timeZoneFullName || '',
+            currency: quoteResult.summaryDetail.currency || null,
+            exchange: priceResult.meta.fullExchangeName || priceResult.meta.exchangeName || null,
+            sector: quoteResult.assetProfile?.sector || null,
+            price: {
+                current: priceResult.meta.regularMarketPrice || 0,
+                day_high: quoteResult.summaryDetail.dayHigh || 0,
+                day_low: quoteResult.summaryDetail.dayLow || 0,
+                previous_close: quoteResult.summaryDetail.regularMarketPreviousClose || 0,
+                day_volume: priceResult.meta.regularMarketVolume || 0,
+                updated_at: new Date(priceResult.meta.regularMarketTime * 1000),
+            },
+        };
+    }
 
-            return {
-                type: quoteResult.quoteType.quoteType,
-                symbol: quoteResult.quoteType.symbol,
-                name: quoteResult.quoteType.longName || quoteResult.quoteType.shortName || '',
-                timezone: quoteResult.quoteType.timeZoneFullName || '',
-                currency: quoteResult.summaryDetail.currency || null,
-                exchange: priceResult.meta.fullExchangeName || priceResult.meta.exchangeName || null,
-                sector: quoteResult.assetProfile?.sector || null,
-                price: {
-                    current: priceResult.meta.regularMarketPrice || 0,
-                    day_high: quoteResult.summaryDetail.dayHigh || 0,
-                    day_low: quoteResult.summaryDetail.dayLow || 0,
-                    previous_close: quoteResult.summaryDetail.regularMarketPreviousClose || 0,
-                    day_volume: priceResult.meta.regularMarketVolume || 0,
-                    updated_at: new Date(priceResult.meta.regularMarketTime * 1000),
-                },
-            };
+    /**
+     * Establishes a WebSocket connection to subscribe to live stock price updates.
+     * @param ticker - The stock ticker to subscribe to.
+     * @param onMessage - The callback function to handle incoming messages.
+     */
+    public subscribeToStockPrice(ticker: string, onMessage: (data: any) => void): void {
+        if (this.webSocket) {
+            this.webSocket.close();
         }
 
-        throw new Error('Unexpected response format');
+        this.webSocket = new WebSocket('wss://streamer.finance.yahoo.com/');
+
+        this.webSocket.onopen = () => {
+            this.webSocket?.send(JSON.stringify({ subscribe: [ticker] }));
+        };
+
+        this.webSocket.onmessage = onMessage;
+
+        this.webSocket.onclose = () => {
+            console.log('WebSocket connection closed');
+        };
+
+        this.webSocket.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
     }
 
     /**
-     * Validates the response status code.
-     * @param status - The HTTP status code.
-     * @returns True if the status code is valid, false otherwise.
+     * Dispose the YahooFinance instance and clean up resources.
      */
-    private isValidResponse(status: number): boolean {
-        return status >= 200 && status < 300 || status === 404;
-    }
+    public dispose(): void {
+        if (this.webSocket) {
+            this.webSocket.close();
+        }
 
-    /**
-     * Handles errors by logging them and rethrowing with a specific message.
-     * @param message - The error message to log and throw.
-     * @param error - The caught error.
-     * @throws The error with the provided message.
-     */
-    private handleError(message: string, error: any): never {
-        console.error(message, error);
-        throw new Error(message);
+        console.log('YahooFinance disposed');
     }
 }
 
